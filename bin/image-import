@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+
+################################################################################
+set -eu
+set -o pipefail
+
+################################################################################
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Import (rename) images so they go into the photo database (directory).
+
+  -i DIR  Import this directory [$option_import_directory]
+  -o DIR  Destination directory [$option_output_directory]
+  -c      Copy files instead of moving them
+  -v      Enable verbose output
+  -h      This message
+
+EOF
+}
+
+################################################################################
+option_import_directory=$HOME/documents/pictures/leota
+option_output_directory=$HOME/documents/pictures/photos
+option_copy_files=0
+option_verbose=0
+
+################################################################################
+parse_command_line() {
+  while getopts "ci:o:vh" o; do
+    case "${o}" in
+    c)
+      option_copy_files=1
+      ;;
+
+    i)
+      option_import_directory=$OPTARG
+      ;;
+
+    o)
+      option_output_directory=$OPTARG
+      ;;
+
+    v)
+      option_verbose=1
+      ;;
+
+    h)
+      usage
+      exit
+      ;;
+
+    *)
+      exit 1
+      ;;
+    esac
+  done
+
+  shift $((OPTIND - 1))
+}
+
+################################################################################
+exiftool_() {
+  local date_tag=$1
+  local opts=()
+
+  if [ "$option_copy_files" -eq 1 ]; then
+    opts+=("-o" ".")
+  fi
+
+  if [ "$option_verbose" -eq 1 ]; then
+    opts+=("-verbose")
+  fi
+
+  exiftool \
+    -preserve \
+    -recurse \
+    "${opts[@]}" \
+    "-Directory<$date_tag" \
+    -d "$option_output_directory/%Y/%m" \
+    "$option_import_directory"
+}
+
+################################################################################
+main() {
+  parse_command_line "$@"
+  exiftool_ "DateTimeOriginal"
+  exiftool_ "CreateDate"
+  exiftool_ "ProfileDateTime"
+  exiftool_ "FileModifyDate"
+}
+
+################################################################################
+main "$@"
