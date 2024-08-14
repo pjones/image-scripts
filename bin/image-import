@@ -21,7 +21,7 @@ EOF
 }
 
 ################################################################################
-option_import_directory=$HOME/documents/pictures/leota
+option_import_directory=$HOME/documents/pictures/mobile
 option_output_directory=$HOME/documents/pictures/photos
 option_copy_files=0
 option_verbose=0
