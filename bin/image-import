@@ -1,94 +1,142 @@
-#!/usr/bin/env bash
+#!/usr/bin/env ruby
 
 ################################################################################
-set -eu
-set -o pipefail
+require("digest")
+require("json")
+require("optparse")
+require("ostruct")
+require("time")
 
 ################################################################################
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [options]
+class ImageImportScript
 
-Import (rename) images so they go into the photo database (directory).
+  ##############################################################################
+  DEFAULT_OPTIONS = {
+    import_directory: File.expand_path("~/documents/pictures/mobile"),
+    output_directory: File.expand_path("~/documents/pictures/photos"),
+    delete_after: 14,
+  }
 
-  -i DIR  Import this directory [$option_import_directory]
-  -o DIR  Destination directory [$option_output_directory]
-  -c      Copy files instead of moving them
-  -v      Enable verbose output
-  -h      This message
+  ##############################################################################
+  def initialize(args=ARGV)
+    @options = OpenStruct.new(DEFAULT_OPTIONS)
+    @to_delete = []
 
-EOF
-}
+    OptionParser.new do |p|
+      p.on("-h", "--help", "This message") do
+        $stdout.puts(p)
+        exit
+      end
+
+      p.on("--import=DIR", "Import directory DIR") do |dir|
+        @options.import_directory = dir
+      end
+
+      p.on("--output=DIR", "Output to directory DIR") do |dir|
+        @options.output_directory = dir
+      end
+
+      p.on("--delete-after=N", "Delete files after N days") do |n|
+        @options.delete_after = n.to_i
+      end
+    end.parse!(args)
+  end
+
+  ##############################################################################
+  def run
+    locked = false
+    state_name = File.join(@options.import_directory, ".import-state.json")
+
+    File.open(state_name, File::RDWR|File::CREAT, 0644) do |state_file|
+      if state_file.flock(File::LOCK_EX|File::LOCK_NB) != 0
+        raise("failed to lock state file, am I already running?")
+      end
+
+      locked = true
+      state = read_state(state_file)
+
+      Dir.glob("#{@options.import_directory}/**/*") do |image|
+        next if image.match(/^\./)
+        next if !File.file?(image)
+        process_image(state, image)
+      end
+
+      @to_delete.each do |file|
+        $stdout.puts("==> Deleting file #{file}")
+        File.unlink(file)
+      end
+
+      write_state(state, state_file)
+    ensure
+      if state_file && locked
+        state_file.flock(File::LOCK_UN)
+      end
+    end
+  end
+
+  ##############################################################################
+  private
+
+  ##############################################################################
+  def read_state(file)
+    str = file.read
+
+    if str.length != 0
+      JSON.parse(str)
+    else
+      {}
+    end
+  end
+
+  ##############################################################################
+  def write_state(state, file)
+    file.rewind
+    file.write(JSON.generate(state))
+    file.flush
+    file.truncate(file.pos)
+  end
+
+  ##############################################################################
+  def process_image(state, file)
+    digest = Digest::MD5.file(file).hexdigest
+
+    if state.key?(digest)
+      # We've already imported this file.  Check if we need to delete
+      # it or just ignore it.
+      added_on = Date.parse(state[digest])
+      $stdout.puts("==> File #{file} already imported on #{added_on}")
+
+      if @options.delete_after > 0 &&
+        (Date.today - added_on > @options.delete_after)
+      then
+        @to_delete << file
+      end
+    else
+      # Import this file:
+      command = [
+        "exiftool",
+        "-o", ".",
+        "-verbose",
+        "-preserve",
+        "-FileName<DateTimeOriginal",
+        "-FileName<CreateDate",
+        "-FileName<FileModifyDate",
+        "-d", "#{@options.output_directory}/%Y/%m/%Y-%m-%d-%%f%%-c.%%e",
+        file,
+      ]
+
+      system(*command) ||
+        raise("failed to run command: #{command.join(' ')}")
+
+      state[digest] = Date.today.to_s
+    end
+  end
+end
 
 ################################################################################
-option_import_directory=$HOME/documents/pictures/mobile
-option_output_directory=$HOME/documents/pictures/photos
-option_copy_files=0
-option_verbose=0
-
-################################################################################
-parse_command_line() {
-  while getopts "ci:o:vh" o; do
-    case "${o}" in
-    c)
-      option_copy_files=1
-      ;;
-
-    i)
-      option_import_directory=$OPTARG
-      ;;
-
-    o)
-      option_output_directory=$OPTARG
-      ;;
-
-    v)
-      option_verbose=1
-      ;;
-
-    h)
-      usage
-      exit
-      ;;
-
-    *)
-      exit 1
-      ;;
-    esac
-  done
-
-  shift $((OPTIND - 1))
-}
-
-################################################################################
-exiftool_() {
-  local date_tag=$1
-  local opts=()
-
-  if [ "$option_copy_files" -eq 1 ]; then
-    opts+=("-o" ".")
-  fi
-
-  if [ "$option_verbose" -eq 1 ]; then
-    opts+=("-verbose")
-  fi
-
-  exiftool \
-    -preserve \
-    -recurse \
-    "${opts[@]}" \
-    "-Directory<$date_tag" \
-    -d "$option_output_directory/%Y/%m" \
-    "$option_import_directory"
-}
-
-################################################################################
-main() {
-  parse_command_line "$@"
-  exiftool_ "DateTimeOriginal"
-  exiftool_ "CreateDate"
-  exiftool_ "FileModifyDate"
-}
-
-################################################################################
-main "$@"
+begin
+  ImageImportScript.new.run
+rescue RuntimeError => e
+  $stderr.puts(File.basename($0) + ": ERROR: #{e}")
+  exit(1)
+end

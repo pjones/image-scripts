@@ -7,6 +7,7 @@ let
   deps = with pkgs; [
     bash
     exiftool
+    ruby
   ];
 
   path = lib.makeBinPath deps;
