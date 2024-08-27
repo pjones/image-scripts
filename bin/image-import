@@ -87,7 +87,6 @@ main() {
   parse_command_line "$@"
   exiftool_ "DateTimeOriginal"
   exiftool_ "CreateDate"
-  exiftool_ "ProfileDateTime"
   exiftool_ "FileModifyDate"
 }
 
